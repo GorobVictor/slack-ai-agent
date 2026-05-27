@@ -18,6 +18,9 @@ const defaultSystemPrompt =
 const defaultMaxTokens = 700;
 const defaultTemperature = 0.4;
 const defaultMaxThreadMessages = 20;
+const defaultAiGatewayId = "default";
+const defaultAiGatewaySkipCache = true;
+const defaultAiGatewayCollectLogs = true;
 const maxRequestBytes = 1024 * 1024;
 const maxGeneratedFiles = 5;
 const maxGeneratedFileBytes = 1024 * 1024;
@@ -67,6 +70,13 @@ type ArtifactToolResult =
   | { ok: true; filename: string }
   | { ok: false; error: string };
 
+type AiGatewayRequestKind = "answer" | "image_description";
+
+type AiGatewayMetadata = Record<
+  string,
+  string | number | boolean | null | bigint
+>;
+
 export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
   initialState: SlackThreadState = {
     messages: [],
@@ -79,7 +89,7 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       defaultMaxThreadMessages,
     );
     const now = new Date().toISOString();
-    const attachments = await this.describeImageAttachments(input.attachments);
+    const attachments = await this.describeImageAttachments(input);
     const userMessage: SlackThreadMessage = {
       role: "user",
       content: formatUserMessage({ ...input, attachments }),
@@ -98,7 +108,7 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       updatedAt: now,
     });
 
-    const response = await this.generateAnswer(messagesWithQuestion);
+    const response = await this.generateAnswer(messagesWithQuestion, input);
     const answeredAt = new Date().toISOString();
 
     this.setState({
@@ -120,21 +130,31 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
   }
 
   private async describeImageAttachments(
-    attachments: SlackInputAttachment[],
+    input: SlackAnswerRequest,
   ): Promise<SlackInputAttachment[]> {
     return Promise.all(
-      attachments.map(async (attachment) => {
+      input.attachments.map(async (attachment) => {
         if (attachment.contentKind !== "image" || !attachment.dataBase64) {
           return attachment;
         }
 
         try {
-          const response = await this.env.AI.run(defaultImageToTextModel, {
-            prompt:
-              "Describe this Slack image for an assistant that will answer a user message. Include visible text, objects, and any relevant context.",
-            image: attachment.dataBase64,
-            max_tokens: 300,
-          });
+          const response = await this.env.AI.run(
+            defaultImageToTextModel,
+            {
+              prompt:
+                "Describe this Slack image for an assistant that will answer a user message. Include visible text, objects, and any relevant context.",
+              image: attachment.dataBase64,
+              max_tokens: 300,
+            },
+            buildAiGatewayOptions(this.env, {
+              requestKind: "image_description",
+              model: defaultImageToTextModel,
+              channel: input.channel,
+              threadTs: input.threadTs,
+              messageTs: input.messageTs,
+            }),
+          );
           const description = extractImageDescription(response);
 
           if (!description) {
@@ -162,33 +182,50 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
 
   private async generateAnswer(
     threadMessages: SlackThreadMessage[],
+    input: SlackAnswerRequest,
   ): Promise<SlackAnswerPayload> {
     const model = readNonEmptyString(this.env.WORKERS_AI_MODEL, defaultModel);
     const files: SlackGeneratedFile[] = [];
     const messages: AiMessage[] = [
-        {
-          role: "system",
-          content: buildSystemPrompt(
-            readNonEmptyString(this.env.AI_SYSTEM_PROMPT, defaultSystemPrompt),
-          ),
-        },
-        ...threadMessages.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
-      ];
-    const maxTokens = readPositiveInteger(this.env.AI_MAX_TOKENS, defaultMaxTokens);
+      {
+        role: "system",
+        content: buildSystemPrompt(
+          readNonEmptyString(this.env.AI_SYSTEM_PROMPT, defaultSystemPrompt),
+        ),
+      },
+      ...threadMessages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    ];
+    const maxTokens = readPositiveInteger(
+      this.env.AI_MAX_TOKENS,
+      defaultMaxTokens,
+    );
     const temperature = readNumber(this.env.AI_TEMPERATURE, defaultTemperature);
+    const latestUserMessage = getLatestUserMessage(threadMessages);
 
     for (let round = 0; round < maxArtifactToolRounds; round += 1) {
-      const response = await this.env.AI.run(model, {
-        messages,
-        tools: [createArtifactToolDefinition()],
-        tool_choice: "auto",
-        parallel_tool_calls: false,
-        max_tokens: maxTokens,
-        temperature,
-      });
+      const response = await this.env.AI.run(
+        model,
+        {
+          messages,
+          tools: [createArtifactToolDefinition()],
+          tool_choice: "auto",
+          parallel_tool_calls: false,
+          max_tokens: maxTokens,
+          temperature,
+        },
+        buildAiGatewayOptions(this.env, {
+          requestKind: "answer",
+          model,
+          channel: input.channel,
+          threadTs: input.threadTs,
+          messageTs: latestUserMessage?.slackMessageTs,
+          slackUser: latestUserMessage?.slackUser,
+          round,
+        }),
+      );
       const toolCalls = getToolCalls(response);
 
       if (toolCalls.length === 0) {
@@ -253,6 +290,85 @@ export default {
     return Response.json(answer);
   },
 } satisfies ExportedHandler<Env>;
+
+function buildAiGatewayOptions(
+  env: Env,
+  input: {
+    requestKind: AiGatewayRequestKind;
+    model: string;
+    channel?: string;
+    threadTs?: string;
+    messageTs?: string;
+    slackUser?: string;
+    round?: number;
+  },
+): AiOptions {
+  return {
+    tags: [
+      "slack-ai-agent",
+      input.requestKind === "answer"
+        ? "slack-answer"
+        : "slack-image-description",
+    ],
+    gateway: {
+      id: readNonEmptyString(env.AI_GATEWAY_ID, defaultAiGatewayId),
+      skipCache: readBoolean(
+        env.AI_GATEWAY_SKIP_CACHE,
+        defaultAiGatewaySkipCache,
+      ),
+      collectLog: readBoolean(
+        env.AI_GATEWAY_COLLECT_LOGS,
+        defaultAiGatewayCollectLogs,
+      ),
+      metadata: buildAiGatewayMetadata(input),
+    },
+  };
+}
+
+function buildAiGatewayMetadata(input: {
+  requestKind: AiGatewayRequestKind;
+  model: string;
+  channel?: string;
+  threadTs?: string;
+  messageTs?: string;
+  slackUser?: string;
+  round?: number;
+}): AiGatewayMetadata {
+  const metadata: AiGatewayMetadata = {
+    request_kind: input.requestKind,
+    model: input.model,
+  };
+
+  if (isNonEmptyString(input.channel)) {
+    metadata.slack_channel = input.channel;
+  }
+
+  if (isNonEmptyString(input.threadTs)) {
+    metadata.slack_thread_ts = input.threadTs;
+  }
+
+  if (isNonEmptyString(input.messageTs)) {
+    metadata.slack_message_ts = input.messageTs;
+  }
+
+  if (isNonEmptyString(input.slackUser)) {
+    metadata.slack_user = input.slackUser;
+  }
+
+  if (typeof input.round === "number") {
+    metadata.tool_round = input.round;
+  }
+
+  return metadata;
+}
+
+function getLatestUserMessage(
+  threadMessages: SlackThreadMessage[],
+): SlackThreadMessage | undefined {
+  return [...threadMessages]
+    .reverse()
+    .find((message) => message.role === "user");
+}
 
 async function authenticate(
   request: Request,
@@ -767,6 +883,26 @@ function readNumber(value: unknown, defaultValue: number): number {
 
     if (Number.isFinite(numberValue)) {
       return numberValue;
+    }
+  }
+
+  return defaultValue;
+}
+
+function readBoolean(value: unknown, defaultValue: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
     }
   }
 

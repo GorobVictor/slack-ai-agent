@@ -27,7 +27,10 @@
     "AI_SYSTEM_PROMPT": "You are a helpful assistant inside Slack. Answer clearly and concisely. Use the Slack thread context when it is useful. Reply in the same language the user used in their latest message. If the language is ambiguous, match the dominant language in the current Slack thread.",
     "AI_MAX_TOKENS": 700,
     "AI_TEMPERATURE": 0.4,
-    "AI_MAX_THREAD_MESSAGES": 20
+    "AI_MAX_THREAD_MESSAGES": 20,
+    "AI_GATEWAY_ID": "default",
+    "AI_GATEWAY_SKIP_CACHE": true,
+    "AI_GATEWAY_COLLECT_LOGS": true
   },
   "observability": {
     "enabled": true,
