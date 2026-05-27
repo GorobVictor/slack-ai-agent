@@ -1,3 +1,9 @@
+import type {
+  SlackAnswerPayload,
+  SlackInputAttachment,
+} from "../shared/slackAttachments.js";
+import { isSlackAnswerPayload } from "../shared/slackAttachments.js";
+
 export type SlackAnswerInput = {
   channel: string;
   threadTs: string;
@@ -5,10 +11,11 @@ export type SlackAnswerInput = {
   user: string;
   text: string;
   isMention: boolean;
+  attachments: SlackInputAttachment[];
 };
 
 export interface SlackAnswerClient {
-  generateAnswer(input: SlackAnswerInput): Promise<string>;
+  generateAnswer(input: SlackAnswerInput): Promise<SlackAnswerPayload>;
 }
 
 export class CloudflareSlackAnswerClient implements SlackAnswerClient {
@@ -18,7 +25,7 @@ export class CloudflareSlackAnswerClient implements SlackAnswerClient {
     private readonly timeoutMs: number,
   ) {}
 
-  async generateAnswer(input: SlackAnswerInput): Promise<string> {
+  async generateAnswer(input: SlackAnswerInput): Promise<SlackAnswerPayload> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -41,23 +48,16 @@ export class CloudflareSlackAnswerClient implements SlackAnswerClient {
 
       const body: unknown = await response.json();
 
-      if (!isAnswerResponse(body)) {
+      if (!isSlackAnswerPayload(body)) {
         throw new Error("Cloudflare agent returned an invalid response.");
       }
 
-      return body.answer.trim();
+      return {
+        ...body,
+        answer: body.answer.trim(),
+      };
     } finally {
       clearTimeout(timeout);
     }
   }
-}
-
-function isAnswerResponse(value: unknown): value is { answer: string } {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Record<string, unknown>;
-
-  return typeof candidate.answer === "string" && candidate.answer.trim().length > 0;
 }

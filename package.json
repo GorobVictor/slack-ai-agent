@@ -23,6 +23,8 @@
   "dependencies": {
     "@slack/bolt": "^4.7.2",
     "agents": "^0.13.3",
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^12.10.0",
+    "pdf-parse": "^2.4.5",
+    "read-excel-file": "^9.0.10"
   }
 }

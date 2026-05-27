@@ -11,6 +11,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["src/bot/**/*.ts"],
+  "include": ["src/bot/**/*.ts", "src/shared/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
