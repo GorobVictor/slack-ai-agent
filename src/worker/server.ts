@@ -226,13 +226,39 @@ function trimMessages(
 }
 
 function extractAiResponse(response: Record<string, unknown>): string {
-  const text = response.response;
+  const text =
+    response.response ??
+    getFirstChatCompletionMessageContent(response);
 
   if (typeof text === "string" && text.trim()) {
     return text.trim();
   }
 
   return "I could not generate an answer for that message.";
+}
+
+function getFirstChatCompletionMessageContent(
+  response: Record<string, unknown>,
+): unknown {
+  const choices = response.choices;
+
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return undefined;
+  }
+
+  const [firstChoice] = choices;
+
+  if (!firstChoice || typeof firstChoice !== "object") {
+    return undefined;
+  }
+
+  const message = (firstChoice as Record<string, unknown>).message;
+
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  return (message as Record<string, unknown>).content;
 }
 
 function isNonEmptyString(value: unknown): value is string {
