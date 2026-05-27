@@ -1,0 +1,32 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "slack-ai-agent-worker",
+  "main": "server.ts",
+  "compatibility_date": "2026-05-27",
+  "compatibility_flags": ["nodejs_compat"],
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SLACK_THREAD_AGENT",
+        "class_name": "SlackThreadAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SlackThreadAgent"]
+    }
+  ],
+  "vars": {
+    "WORKERS_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

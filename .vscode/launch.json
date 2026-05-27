@@ -7,7 +7,7 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "runtimeArgs": ["--import", "tsx"],
-      "program": "${workspaceFolder}/src/index.ts",
+      "program": "${workspaceFolder}/src/bot/index.ts",
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env",
       "skipFiles": ["<node_internals>/**"]

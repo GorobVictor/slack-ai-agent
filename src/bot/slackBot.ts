@@ -1,5 +1,6 @@
 import { App } from "@slack/bolt";
 
+import type { SlackAnswerClient, SlackAnswerInput } from "./cloudflareAgentClient.js";
 import type { AppConfig } from "./config.js";
 import type { SlackConversationStore } from "./storage.js";
 
@@ -13,9 +14,13 @@ type SlackTextEvent = {
   user?: string;
 };
 
-export function createSlackEchoBot(
+const fallbackAnswer =
+  "I could not generate an answer right now. Please try again later.";
+
+export function createSlackAiBot(
   config: AppConfig,
   conversations: SlackConversationStore,
+  answerClient: SlackAnswerClient,
 ): App {
   const app = new App({
     token: config.slackBotToken,
@@ -38,14 +43,27 @@ export function createSlackEchoBot(
       return;
     }
 
+    const text = await generateAnswer(
+      answerClient,
+      {
+        channel: mention.channel,
+        threadTs,
+        messageTs: mention.ts,
+        user: mention.user ?? "unknown",
+        text: mention.text,
+        isMention: true,
+      },
+      logger,
+    );
+
     await client.chat.postMessage({
       channel: mention.channel,
-      text: mention.text,
+      text,
       thread_ts: threadTs,
     });
   });
 
-  app.event("message", async ({ event, client }) => {
+  app.event("message", async ({ event, client, logger }) => {
     const message = event as SlackTextEvent;
 
     if (
@@ -65,9 +83,22 @@ export function createSlackEchoBot(
       return;
     }
 
+    const text = await generateAnswer(
+      answerClient,
+      {
+        channel: message.channel,
+        threadTs: message.thread_ts,
+        messageTs: message.ts,
+        user: message.user ?? "unknown",
+        text: message.text,
+        isMention: false,
+      },
+      logger,
+    );
+
     await client.chat.postMessage({
       channel: message.channel,
-      text: message.text,
+      text,
       thread_ts: message.thread_ts,
     });
   });
@@ -83,4 +114,17 @@ function canReplyToTextEvent(
 
 function isBotOrSlackSubtype(event: SlackTextEvent): boolean {
   return Boolean(event.bot_id || event.subtype);
+}
+
+async function generateAnswer(
+  answerClient: SlackAnswerClient,
+  input: SlackAnswerInput,
+  logger: { error(message: string, error?: unknown): void },
+): Promise<string> {
+  try {
+    return await answerClient.generateAnswer(input);
+  } catch (error) {
+    logger.error("Failed to generate Cloudflare agent answer.", error);
+    return fallbackAnswer;
+  }
 }
