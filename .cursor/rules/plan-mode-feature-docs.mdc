@@ -9,4 +9,6 @@ alwaysApply: true
 - Use a zero-padded sequential `{index}` if existing feature documents already use one; otherwise use the next plain integer.
 - Use `{date}` in `YYYY-MM-DD` format.
 - Use a short lowercase kebab-case `{feature}` name that describes the work.
-- Keep the saved plan content in the same language the user used to request the work, while keeping file paths, identifiers, and code references unchanged.
+- Write saved feature documents in English because they are repository content.
+- If the chat plan was created in another language, translate it to English before saving it under `proto/features/`.
+- Keep file paths, identifiers, and code references unchanged during translation.
