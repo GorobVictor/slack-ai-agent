@@ -129,6 +129,13 @@ under `vars`:
 - `AI_TEMPERATURE` controls response variability.
 - `AI_MAX_THREAD_MESSAGES` controls how many recent thread messages are kept in
   the prompt context.
+- `AI_GATEWAY_ID` selects the Cloudflare AI Gateway used for Workers AI calls.
+  The default value, `default`, lets Cloudflare create the default gateway on
+  first authenticated use.
+- `AI_GATEWAY_SKIP_CACHE` controls whether AI Gateway caching is bypassed for
+  Slack thread requests.
+- `AI_GATEWAY_COLLECT_LOGS` controls whether requests are collected in AI
+  Gateway logs and analytics.
 
 Useful commands:
 
