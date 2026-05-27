@@ -11,6 +11,17 @@
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env",
       "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Debug Cloudflare Worker",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "wrangler",
+      "runtimeArgs": ["dev", "--config", "${workspaceFolder}/src/worker/wrangler.jsonc"],
+      "program": "${workspaceFolder}/src/worker/server.ts",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/src/worker/.dev.vars",
+      "skipFiles": ["<node_internals>/**"]
     }
   ]
 }
