@@ -104,6 +104,16 @@ The Worker lives under [`src/worker/`](src/worker/). It exposes:
 - `POST /slack/answer` for authenticated Slack answer requests from the Node.js
   bot.
 
+AI behavior is configured in [`src/worker/wrangler.jsonc`](src/worker/wrangler.jsonc)
+under `vars`:
+
+- `WORKERS_AI_MODEL` selects the Workers AI model.
+- `AI_SYSTEM_PROMPT` controls the assistant behavior.
+- `AI_MAX_TOKENS` controls the response length budget.
+- `AI_TEMPERATURE` controls response variability.
+- `AI_MAX_THREAD_MESSAGES` controls how many recent thread messages are kept in
+  the prompt context.
+
 Useful commands:
 
 ```sh
