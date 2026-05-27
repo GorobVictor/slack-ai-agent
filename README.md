@@ -48,3 +48,7 @@ Run the compiled application:
 ```sh
 npm start -- Rob
 ```
+
+## Repository Guidance
+
+Agent-facing project instructions live in [`AGENTS.md`](AGENTS.md). Update it when repository conventions, agent workflows, or important project context changes.

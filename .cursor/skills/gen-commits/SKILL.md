@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## Purpose
 
-Create clean local commits from uncommitted changes by grouping related work logically.
+Create clean local commits from uncommitted changes by grouping related work logically, then keep repository guidance documents current.
 
 ## Required Commit Format
 
@@ -40,7 +40,10 @@ Always include a detailed commit body that explains the purpose and important co
 5. Stage only the files that belong to the current logical group.
 6. Create one local commit per group using the required subject format and a detailed body.
 7. Run `git status --short` after each commit to verify what remains.
-8. Stop when all intended changes are committed or when remaining changes are unrelated or unclear.
+8. After all intended code/configuration commits are created, review `AGENTS.md` and `README.md` against the committed changes.
+9. If repository conventions, commands, setup, usage, project structure, or agent workflows changed, update `AGENTS.md` and `README.md` to match the current state.
+10. Commit those documentation updates as their own logical local commit using the required subject format.
+11. Stop only when all intended changes are committed and `AGENTS.md` and `README.md` are current, or when remaining changes are unrelated or unclear.
 
 ## Hard Rules
 
@@ -48,5 +51,6 @@ Always include a detailed commit body that explains the purpose and important co
 - Never push to any remote.
 - Never use force operations.
 - Never skip git hooks unless the user explicitly requests it.
+- Do not finish a `/gen-commits` run without checking whether `AGENTS.md` and `README.md` need updates.
 - If a hook changes files, inspect those changes before deciding whether they belong in a new commit.
 - If grouping is ambiguous, ask the user before committing.
