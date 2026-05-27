@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This repository contains a basic Node.js console application written in TypeScript. Application code lives in `src/`, and TypeScript builds compiled JavaScript into `dist/`.
+This repository contains a TypeScript Slack bot that runs as a Node.js console application. The bot uses Slack Socket Mode, stores active thread state in SQLite, and builds compiled JavaScript into `dist/`.
 
 ## Repository Language
 
@@ -14,16 +14,20 @@ This repository contains a basic Node.js console application written in TypeScri
 
 ```sh
 npm install
-npm run dev -- Rob
+npm run dev
 npm run build
-npm start -- Rob
+npm start
 npm run check
 ```
 
 ## Source Layout
 
 - `src/index.ts` is the console application entrypoint.
+- `src/config.ts` reads required Slack token configuration from the environment.
+- `src/slackBot.ts` wires Slack Socket Mode event handlers.
+- `src/storage.ts` manages local SQLite persistence for active Slack threads.
 - `dist/` is generated build output and must not be committed.
+- `data/` is local SQLite runtime data and must not be committed.
 - `proto/features/` stores approved feature plans in English.
 - `.cursor/rules/` stores persistent repository guidance for agents.
 - `.cursor/skills/` stores repository-specific agent skills.
