@@ -50,6 +50,8 @@ Add these bot token scopes:
 
 - `app_mentions:read`
 - `chat:write`
+- `files:read` for reading files that users attach to messages
+- `files:write` for uploading generated files back into Slack threads
 - `channels:history` for public channel thread replies
 - `groups:history` for private channel thread replies, if needed
 - `im:history` for direct message thread replies, if needed
@@ -84,6 +86,20 @@ The bot replies in a thread when it is mentioned. It also keeps replying in
 threads that started with a mention. Each Slack message is sent to the
 Cloudflare Worker, which routes the message to a durable `SlackThreadAgent`
 instance keyed by `channel + thread_ts`.
+
+When users attach files, the Node.js bot downloads them with the Slack bot token
+and sends normalized attachment content to the Worker. The bot extracts text from
+text-like files, PDFs, CSV files, and Excel workbooks. Small images are passed as
+bounded inline image payloads; unsupported or oversized files are represented by
+metadata and a note so the assistant can explain the limitation.
+
+When the assistant needs to create a downloadable artifact, the Worker exposes a
+controlled `create_artifact` AI tool. The tool validates file names, MIME types,
+content, file count, and size before returning generated file payloads to the
+Node.js bot. The bot then uploads those files to the same Slack thread with
+Slack's file upload API. This is useful for code snippets, CSV or
+spreadsheet-ready data, and other artifacts that should not be pasted directly
+into a Slack message.
 
 Active Slack threads are stored in SQLite so the bot can continue conversations
 after a process restart. The Cloudflare agent stores compact AI conversation
