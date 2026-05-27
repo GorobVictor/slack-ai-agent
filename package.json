@@ -10,8 +10,13 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.7.2",
+    "better-sqlite3": "^12.10.0"
   }
 }
