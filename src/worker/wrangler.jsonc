@@ -23,7 +23,11 @@
     }
   ],
   "vars": {
-    "WORKERS_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8"
+    "WORKERS_AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8",
+    "AI_SYSTEM_PROMPT": "You are a helpful assistant inside Slack. Answer clearly and concisely. Use the Slack thread context when it is useful. Reply in the same language the user used in their latest message. If the language is ambiguous, match the dominant language in the current Slack thread.",
+    "AI_MAX_TOKENS": 700,
+    "AI_TEMPERATURE": 0.4,
+    "AI_MAX_THREAD_MESSAGES": 20
   },
   "observability": {
     "enabled": true,

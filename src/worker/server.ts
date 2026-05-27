@@ -2,8 +2,12 @@ import { Agent } from "agents";
 
 const answerPath = "/slack/answer";
 const defaultModel = "@cf/meta/llama-3.1-8b-instruct-fp8";
+const defaultSystemPrompt =
+  "You are a helpful assistant inside Slack. Answer clearly and concisely. Use the Slack thread context when it is useful. Reply in the same language the user used in their latest message. If the language is ambiguous, match the dominant language in the current Slack thread.";
+const defaultMaxTokens = 700;
+const defaultTemperature = 0.4;
+const defaultMaxThreadMessages = 20;
 const maxRequestBytes = 64 * 1024;
-const maxThreadMessages = 20;
 
 type SlackAnswerRequest = {
   channel: string;
@@ -38,6 +42,10 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
   };
 
   async answer(input: SlackAnswerRequest): Promise<SlackAnswerResponse> {
+    const maxThreadMessages = readPositiveInteger(
+      this.env.AI_MAX_THREAD_MESSAGES,
+      defaultMaxThreadMessages,
+    );
     const now = new Date().toISOString();
     const userMessage: SlackThreadMessage = {
       role: "user",
@@ -50,7 +58,7 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
     const messagesWithQuestion = trimMessages([
       ...this.state.messages,
       userMessage,
-    ]);
+    ], maxThreadMessages);
 
     this.setState({
       messages: messagesWithQuestion,
@@ -61,14 +69,17 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
     const answeredAt = new Date().toISOString();
 
     this.setState({
-      messages: trimMessages([
-        ...messagesWithQuestion,
-        {
-          role: "assistant",
-          content: answer,
-          createdAt: answeredAt,
-        },
-      ]),
+      messages: trimMessages(
+        [
+          ...messagesWithQuestion,
+          {
+            role: "assistant",
+            content: answer,
+            createdAt: answeredAt,
+          },
+        ],
+        maxThreadMessages,
+      ),
       updatedAt: answeredAt,
     });
 
@@ -78,21 +89,20 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
   private async generateAnswer(
     threadMessages: SlackThreadMessage[],
   ): Promise<string> {
-    const model = this.env.WORKERS_AI_MODEL || defaultModel;
+    const model = readNonEmptyString(this.env.WORKERS_AI_MODEL, defaultModel);
     const response = await this.env.AI.run(model, {
       messages: [
         {
           role: "system",
-          content:
-            "You are a helpful assistant inside Slack. Answer clearly and concisely. Use the Slack thread context when it is useful. If the user writes in Ukrainian, answer in Ukrainian; otherwise answer in the user's language.",
+          content: readNonEmptyString(this.env.AI_SYSTEM_PROMPT, defaultSystemPrompt),
         },
         ...threadMessages.map((message) => ({
           role: message.role,
           content: message.content,
         })),
       ],
-      max_tokens: 700,
-      temperature: 0.4,
+      max_tokens: readPositiveInteger(this.env.AI_MAX_TOKENS, defaultMaxTokens),
+      temperature: readNumber(this.env.AI_TEMPERATURE, defaultTemperature),
     });
 
     return extractAiResponse(response);
@@ -208,7 +218,10 @@ function cleanSlackText(text: string): string {
   return text.replace(/<@[A-Z0-9]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-function trimMessages(messages: SlackThreadMessage[]): SlackThreadMessage[] {
+function trimMessages(
+  messages: SlackThreadMessage[],
+  maxThreadMessages = defaultMaxThreadMessages,
+): SlackThreadMessage[] {
   return messages.slice(-maxThreadMessages);
 }
 
@@ -224,6 +237,36 @@ function extractAiResponse(response: Record<string, unknown>): string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function readNonEmptyString(value: unknown, defaultValue: string): string {
+  return isNonEmptyString(value) ? value : defaultValue;
+}
+
+function readPositiveInteger(value: unknown, defaultValue: number): number {
+  const numberValue = readNumber(value, defaultValue);
+
+  if (!Number.isInteger(numberValue) || numberValue <= 0) {
+    return defaultValue;
+  }
+
+  return numberValue;
+}
+
+function readNumber(value: unknown, defaultValue: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numberValue = Number(value);
+
+    if (Number.isFinite(numberValue)) {
+      return numberValue;
+    }
+  }
+
+  return defaultValue;
 }
 
 function constantTimeEqual(left: string, right: string): boolean {
