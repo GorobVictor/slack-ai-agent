@@ -1,0 +1,12 @@
+---
+description: Save final Plan Mode plans as feature documents
+alwaysApply: true
+---
+
+# Plan Mode Feature Documents
+
+- When Plan Mode is used, save the final approved plan in `proto/features/{index}-{date}-{feature}.md`.
+- Use a zero-padded sequential `{index}` if existing feature documents already use one; otherwise use the next plain integer.
+- Use `{date}` in `YYYY-MM-DD` format.
+- Use a short lowercase kebab-case `{feature}` name that describes the work.
+- Keep the saved plan content in the same language the user used to request the work, while keeping file paths, identifiers, and code references unchanged.

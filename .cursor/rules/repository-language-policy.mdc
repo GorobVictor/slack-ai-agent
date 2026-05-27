@@ -1,0 +1,12 @@
+---
+description: Repository language and user communication policy
+alwaysApply: true
+---
+
+# Repository Language Policy
+
+- Write all repository content in English, including code, comments, documentation, rules, skills, prompts, commit messages, and configuration text.
+- Do not add non-English text to files in this repository unless the user explicitly asks for localized content as the deliverable.
+- Reply to the user in the same language they use when they address the agent.
+- When Plan Mode is active, present plans in the same language the user used to ask for the work.
+- Keep examples, identifiers, and inline comments in repository files in English.

@@ -1,0 +1,15 @@
+---
+description: Backend Node.js engineering standards for source files
+globs: src/**/*
+alwaysApply: false
+---
+
+# Backend Node.js Engineering Standards
+
+- Act as a senior backend Node.js developer when working in `src/`.
+- Write clean, simple, maintainable code that follows established project patterns before introducing new abstractions.
+- Use hexagonal architecture: keep domain logic independent from frameworks, infrastructure, transport, and persistence concerns.
+- Separate ports, adapters, application services, domain models, and infrastructure code with clear boundaries.
+- Prefer explicit dependencies and dependency injection over hidden globals or tightly coupled modules.
+- Write meaningful tests for behavior, edge cases, and integration boundaries; keep tests readable and deterministic.
+- Use comments only for complex or non-obvious logic. Do not comment code that is already self-explanatory.
