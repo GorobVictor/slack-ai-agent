@@ -10,7 +10,7 @@ export type AppConfig = {
 };
 
 const defaultDatabasePath = resolve(process.cwd(), "data", "slack-ai-agent.sqlite");
-const defaultCloudflareAgentTimeoutMs = 30_000;
+const defaultCloudflareAgentTimeoutMs = 120_000;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {

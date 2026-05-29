@@ -1,4 +1,5 @@
 import { mcpServers, type McpServerConfig } from "./mcp.config";
+import type { Logger } from "./logger";
 
 const defaultMcpConnectionTimeoutMs = 5_000;
 const maxMcpToolResultCharacters = 12_000;
@@ -47,37 +48,43 @@ export async function loadMcpToolDefinitions(
   agent: McpAgentClient,
   env: unknown,
   options: { connectionTimeoutMs?: number } = {},
+  logger?: Logger,
 ): Promise<McpToolDefinition[]> {
-  await registerConfiguredMcpServers(agent, env);
+  await registerConfiguredMcpServers(agent, env, logger);
   await agent.mcp.waitForConnections({
     timeout: options.connectionTimeoutMs ?? defaultMcpConnectionTimeoutMs,
   });
 
   const usedNames = new Set<string>();
-
-  return agent.mcp
+  const listedTools = agent.mcp
     .listTools()
     .map(toMcpListedTool)
-    .filter((tool): tool is McpListedTool => Boolean(tool))
-    .map((tool) => {
-      const aiToolName = createUniqueAiToolName(tool, usedNames);
+    .filter((tool): tool is McpListedTool => Boolean(tool));
 
-      return {
-        aiToolName,
-        mcpToolName: tool.name,
-        serverId: tool.serverId,
-        definition: {
-          type: "function",
-          function: {
-            name: aiToolName,
-            description:
-              tool.description ??
-              `Call the ${tool.name} tool from MCP server ${tool.serverId}.`,
-            parameters: normalizeMcpInputSchema(tool.inputSchema),
-          },
+  logger?.info("mcp_tools_discovered", {
+    mcpToolCount: listedTools.length,
+    mcpToolNames: listedTools.map((tool) => tool.name),
+  });
+
+  return listedTools.map((tool) => {
+    const aiToolName = createUniqueAiToolName(tool, usedNames);
+
+    return {
+      aiToolName,
+      mcpToolName: tool.name,
+      serverId: tool.serverId,
+      definition: {
+        type: "function",
+        function: {
+          name: aiToolName,
+          description:
+            tool.description ??
+            `Call the ${tool.name} tool from MCP server ${tool.serverId}.`,
+          parameters: normalizeMcpInputSchema(tool.inputSchema),
         },
-      };
-    });
+      },
+    };
+  });
 }
 
 export async function executeMcpToolCall(
@@ -85,6 +92,7 @@ export async function executeMcpToolCall(
   toolName: string,
   rawArguments: string,
   tools: McpToolDefinition[],
+  logger?: Logger,
 ): Promise<McpToolResult | null> {
   const tool = tools.find((candidate) => candidate.aiToolName === toolName);
 
@@ -94,18 +102,40 @@ export async function executeMcpToolCall(
 
   const parsedArguments = parseJsonObject(rawArguments);
   if (!parsedArguments) {
+    logger?.warn("mcp_tool_call_invalid_arguments", {
+      toolName,
+      argumentCharacters: rawArguments.length,
+    });
     return { ok: false, error: "MCP tool arguments must be a JSON object." };
   }
 
   try {
+    logger?.info("mcp_tool_call_started", {
+      toolName,
+      mcpToolName: tool.mcpToolName,
+      serverId: tool.serverId,
+    });
     const result = await agent.mcp.callTool({
       serverId: tool.serverId,
       name: tool.mcpToolName,
       arguments: parsedArguments,
     });
 
+    logger?.info("mcp_tool_call_completed", {
+      toolName,
+      mcpToolName: tool.mcpToolName,
+      serverId: tool.serverId,
+    });
+
     return { ok: true, result: compactMcpToolResult(result) };
   } catch (error) {
+    logger?.error("mcp_tool_call_failed", {
+      error,
+      toolName,
+      mcpToolName: tool.mcpToolName,
+      serverId: tool.serverId,
+    });
+
     return {
       ok: false,
       error:
@@ -119,6 +149,7 @@ export async function executeMcpToolCall(
 async function registerConfiguredMcpServers(
   agent: McpAgentClient,
   env: unknown,
+  logger?: Logger,
 ): Promise<void> {
   await Promise.all(
     mcpServers
@@ -126,23 +157,33 @@ async function registerConfiguredMcpServers(
       .map(async (server) => {
         const headers = resolveHeaders(server, env);
         if (headers === null) {
-          console.warn(
-            `Skipping MCP server ${server.name}: required header environment value is missing.`,
-          );
+          logger?.warn("mcp_server_skipped_missing_env", {
+            serverName: server.name,
+            serverUrl: server.url,
+          });
           return;
         }
 
         try {
-          await agent.addMcpServer(server.name, server.url, {
+          const result = await agent.addMcpServer(server.name, server.url, {
             transport: {
               type: server.transport ?? "auto",
               headers,
             },
           });
+          logger?.info("mcp_server_registered", {
+            serverName: server.name,
+            serverUrl: server.url,
+            serverId: result.id,
+            state: result.state,
+            needsAuth: result.state === "authenticating",
+          });
         } catch (error) {
-          console.warn(
-            `Could not register MCP server ${server.name}: ${getErrorMessage(error)}`,
-          );
+          logger?.error("mcp_server_registration_failed", {
+            error,
+            serverName: server.name,
+            serverUrl: server.url,
+          });
         }
       }),
   );
