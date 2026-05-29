@@ -9,6 +9,10 @@ import {
   isSlackGeneratedFile,
   isSlackInputAttachment,
 } from "../shared/slackAttachments";
+import {
+  executeMcpToolCall,
+  loadMcpToolDefinitions,
+} from "./mcp";
 
 const answerPath = "/slack/answer";
 const defaultModel = "@cf/meta/llama-3.1-8b-instruct-fp8";
@@ -21,6 +25,7 @@ const defaultMaxThreadMessages = 20;
 const defaultAiGatewayId = "default";
 const defaultAiGatewaySkipCache = true;
 const defaultAiGatewayCollectLogs = true;
+const defaultMcpConnectionTimeoutMs = 5_000;
 const maxRequestBytes = 1024 * 1024;
 const maxGeneratedFiles = 5;
 const maxGeneratedFileBytes = 1024 * 1024;
@@ -203,6 +208,12 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       defaultMaxTokens,
     );
     const temperature = readNumber(this.env.AI_TEMPERATURE, defaultTemperature);
+    const mcpTools = await loadMcpToolDefinitions(this, this.env, {
+      connectionTimeoutMs: readPositiveInteger(
+        this.env.MCP_CONNECTION_TIMEOUT_MS,
+        defaultMcpConnectionTimeoutMs,
+      ),
+    });
     const latestUserMessage = getLatestUserMessage(threadMessages);
 
     for (let round = 0; round < maxArtifactToolRounds; round += 1) {
@@ -210,7 +221,10 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
         model,
         {
           messages,
-          tools: [createArtifactToolDefinition()],
+          tools: [
+            createArtifactToolDefinition(),
+            ...mcpTools.map((tool) => tool.definition),
+          ],
           tool_choice: "auto",
           parallel_tool_calls: false,
           max_tokens: maxTokens,
@@ -242,7 +256,18 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       });
 
       for (const toolCall of toolCalls) {
-        const result = executeArtifactToolCall(toolCall, files);
+        const result =
+          toolCall.function.name === artifactToolName
+            ? executeArtifactToolCall(toolCall, files)
+            : ((await executeMcpToolCall(
+                this,
+                toolCall.function.name,
+                toolCall.function.arguments,
+                mcpTools,
+              )) ?? {
+                ok: false,
+                error: `Unknown tool: ${toolCall.function.name}`,
+              });
 
         messages.push({
           role: "tool",
@@ -465,6 +490,8 @@ function trimMessages(
 
 function buildSystemPrompt(basePrompt: string): string {
   return `${basePrompt}
+
+Use available MCP tools when they can provide fresher or more precise context than the Slack thread alone. Prefer Context7 MCP tools for software library and framework documentation lookups before answering documentation-sensitive implementation questions.
 
 When a downloadable artifact is useful, call the ${artifactToolName} tool instead of pasting large content into Slack. Use the tool for complete artifacts such as code files, CSV data, JSON files, markdown documents, or spreadsheet-ready data. After the tool succeeds, reply with a short natural-language summary only. Do not print tool arguments, JSON payloads, or full file contents in the Slack reply.`;
 }

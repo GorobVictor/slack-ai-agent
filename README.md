@@ -38,6 +38,7 @@ For local Worker development, create `src/worker/.dev.vars`:
 
 ```sh
 AGENT_AUTH_TOKEN=replace-with-shared-worker-token
+CONTEXT7_API_KEY=replace-with-context7-api-key
 ```
 
 ## Slack App Configuration
@@ -136,6 +137,14 @@ under `vars`:
   Slack thread requests.
 - `AI_GATEWAY_COLLECT_LOGS` controls whether requests are collected in AI
   Gateway logs and analytics.
+- `MCP_CONNECTION_TIMEOUT_MS` controls how long the Worker waits for configured
+  MCP servers to connect before generating an answer without their tools.
+
+MCP servers are configured in [`src/worker/mcp.config.ts`](src/worker/mcp.config.ts).
+The initial configuration enables Context7 over Streamable HTTP. Add more
+servers by appending entries to `mcpServers`; header values can reference Worker
+secrets or vars with `${ENV_VAR}` placeholders. Keep API keys in Worker secrets
+or local `.dev.vars`, not in the config file.
 
 Useful commands:
 
@@ -150,6 +159,7 @@ Before deploying, set the Worker secret:
 
 ```sh
 npx wrangler secret put AGENT_AUTH_TOKEN --config src/worker/wrangler.jsonc
+npx wrangler secret put CONTEXT7_API_KEY --config src/worker/wrangler.jsonc
 ```
 
 ## Build
