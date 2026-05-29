@@ -24,12 +24,12 @@ SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_AGENT_DB_PATH=./data/slack-ai-agent.sqlite
 CLOUDFLARE_AGENT_URL=http://localhost:8787/slack/answer
 CLOUDFLARE_AGENT_TOKEN=replace-with-shared-worker-token
-CLOUDFLARE_AGENT_TIMEOUT_MS=30000
+CLOUDFLARE_AGENT_TIMEOUT_MS=120000
 ```
 
 `SLACK_AGENT_DB_PATH` is optional. If it is not set, the app stores SQLite data
 at `./data/slack-ai-agent.sqlite`. `CLOUDFLARE_AGENT_TIMEOUT_MS` is optional and
-defaults to `30000`.
+defaults to `120000`.
 
 The Cloudflare Worker uses a separate secret named `AGENT_AUTH_TOKEN`. It must
 match `CLOUDFLARE_AGENT_TOKEN` in the Node.js process.
@@ -139,12 +139,22 @@ under `vars`:
   Gateway logs and analytics.
 - `MCP_CONNECTION_TIMEOUT_MS` controls how long the Worker waits for configured
   MCP servers to connect before generating an answer without their tools.
+- `LOG_LEVEL` controls structured Worker log verbosity. Supported values are
+  `debug`, `info`, `warn`, `error`, and `silent`.
+- `AI_LOG_RESPONSE_SNIPPET_CHARS` controls how much AI/MCP response text can
+  appear in structured debug logs before truncation.
 
 MCP servers are configured in [`src/worker/mcp.config.ts`](src/worker/mcp.config.ts).
 The initial configuration enables Context7 over Streamable HTTP. Add more
 servers by appending entries to `mcpServers`; header values can reference Worker
 secrets or vars with `${ENV_VAR}` placeholders. Keep API keys in Worker secrets
 or local `.dev.vars`, not in the config file.
+
+Worker logs are emitted as structured JSON through `console.*`. Each Slack
+answer request gets a `requestId` that appears in start, success, failure, AI
+round, MCP, and tool-call log events. Use `LOG_LEVEL=debug` temporarily when
+investigating fallback replies such as `I could not generate an answer for that
+message.` or malformed tool-call output.
 
 Useful commands:
 
