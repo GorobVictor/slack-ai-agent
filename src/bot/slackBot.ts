@@ -15,6 +15,10 @@ import {
 import type { SlackConversationStore } from "./storage.js";
 import type { SlackAnswerPayload, SlackGeneratedFile } from "../shared/slackAttachments.js";
 
+const slackMrkdwnSectionTextLimit = 3_000;
+const maxSlackMessageBlocks = 50;
+const truncationNotice = "\n\n_Response truncated because Slack message blocks reached their limit._";
+
 type SlackTextEvent = {
   bot_id?: string;
   channel?: string;
@@ -26,12 +30,26 @@ type SlackTextEvent = {
   user?: string;
 };
 
+type SlackMrkdwnSectionBlock = {
+  type: "section";
+  text: {
+    type: "mrkdwn";
+    text: string;
+  };
+};
+
+type SlackMrkdwnMessage = {
+  text: string;
+  blocks: SlackMrkdwnSectionBlock[];
+};
+
 type SlackEventClient = {
   chat: {
     postMessage(options: {
       channel: string;
       text: string;
       thread_ts: string;
+      blocks?: SlackMrkdwnSectionBlock[];
     }): Promise<unknown>;
   };
   filesUploadV2(options: {
@@ -200,10 +218,62 @@ async function postAnswerAndFiles(
 ): Promise<void> {
   await client.chat.postMessage({
     channel,
-    text: response.answer,
     thread_ts: threadTs,
+    ...formatSlackMrkdwnMessage(response.answer),
   });
   await uploadGeneratedFiles(client, channel, threadTs, response.files, logger);
+}
+
+export function formatSlackMrkdwnMessage(text: string): SlackMrkdwnMessage {
+  return {
+    text,
+    blocks: chunkSlackMrkdwnText(text).map((chunk) => ({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: chunk,
+      },
+    })),
+  };
+}
+
+function chunkSlackMrkdwnText(text: string): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0 && chunks.length < maxSlackMessageBlocks) {
+    if (remaining.length <= slackMrkdwnSectionTextLimit) {
+      chunks.push(remaining);
+      break;
+    }
+
+    const splitIndex = findSlackMrkdwnSplitIndex(remaining);
+    chunks.push(remaining.slice(0, splitIndex));
+    remaining = remaining.slice(splitIndex);
+  }
+
+  if (remaining.length > 0 && chunks.length === maxSlackMessageBlocks) {
+    const finalChunk = chunks.at(-1) ?? "";
+    chunks[chunks.length - 1] = `${finalChunk.slice(
+      0,
+      slackMrkdwnSectionTextLimit - truncationNotice.length,
+    )}${truncationNotice}`;
+  }
+
+  return chunks.length ? chunks : [" "];
+}
+
+function findSlackMrkdwnSplitIndex(text: string): number {
+  const nextChunk = text.slice(0, slackMrkdwnSectionTextLimit);
+  const newlineIndex = nextChunk.lastIndexOf("\n");
+
+  if (newlineIndex > 0) {
+    return newlineIndex + 1;
+  }
+
+  const spaceIndex = nextChunk.lastIndexOf(" ");
+
+  return spaceIndex > 0 ? spaceIndex + 1 : slackMrkdwnSectionTextLimit;
 }
 
 async function uploadGeneratedFiles(
@@ -231,8 +301,10 @@ async function uploadGeneratedFiles(
       logger.error(`Failed to upload generated Slack file ${file.filename}.`, error);
       await client.chat.postMessage({
         channel,
-        text: `I generated ${file.filename}, but could not upload it to Slack.`,
         thread_ts: threadTs,
+        ...formatSlackMrkdwnMessage(
+          `I generated ${file.filename}, but could not upload it to Slack.`,
+        ),
       });
     }
   }
