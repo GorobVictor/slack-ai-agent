@@ -7,7 +7,9 @@ The Node.js bot runs as a console application through Slack Socket Mode, stores
 active thread state in SQLite, and builds compiled JavaScript into `dist/`. The
 Cloudflare Worker uses the Agents SDK and Workers AI to generate Slack thread
 answers, including tool-generated file artifacts that the bot uploads back to
-Slack threads.
+Slack threads. Bot replies are posted with Slack-compatible `mrkdwn` Block Kit
+sections, and the Worker prompt should guide models to emit Slack `mrkdwn`
+directly rather than GitHub Markdown.
 
 ## Repository Language
 
@@ -33,7 +35,7 @@ npm run worker:dev
 
 - `src/bot/index.ts` is the Node.js console application entrypoint.
 - `src/bot/config.ts` reads required Slack and Cloudflare backend configuration from the environment.
-- `src/bot/slackBot.ts` wires Slack Socket Mode event handlers.
+- `src/bot/slackBot.ts` wires Slack Socket Mode event handlers and posts replies as Slack `mrkdwn` blocks.
 - `src/bot/storage.ts` manages local SQLite persistence for active Slack threads.
 - `src/bot/cloudflareAgentClient.ts` calls the Cloudflare Worker answer endpoint.
 - `src/bot/slackFileAttachments.ts` downloads and normalizes Slack file attachments before forwarding them to the Worker.

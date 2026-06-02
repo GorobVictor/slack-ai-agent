@@ -88,6 +88,11 @@ threads that started with a mention. Each Slack message is sent to the
 Cloudflare Worker, which routes the message to a durable `SlackThreadAgent`
 instance keyed by `channel + thread_ts`.
 
+Bot replies are posted with Block Kit `mrkdwn` sections so Slack-compatible
+formatting renders in threads. The Worker prompt asks the model to use Slack
+`mrkdwn` syntax directly, such as `*bold*`, `• item`, and
+`<https://example.com|label>` links.
+
 When users attach files, the Node.js bot downloads them with the Slack bot token
 and sends normalized attachment content to the Worker. The bot extracts text from
 text-like files, PDFs, CSV files, and Excel workbooks. Small images are passed as
