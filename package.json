@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/bot/index.js",
     "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "worker:dev": "wrangler dev --config src/worker/wrangler.jsonc",
     "worker:deploy": "wrangler deploy --config src/worker/wrangler.jsonc",
     "worker:types": "wrangler types --config src/worker/wrangler.jsonc src/worker/env.d.ts",
@@ -18,6 +20,7 @@
     "@types/node": "^25.9.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
     "wrangler": "^4.95.0"
   },
   "dependencies": {
