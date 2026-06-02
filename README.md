@@ -109,6 +109,8 @@ context for each Slack thread.
 ## Project Layout
 
 - [`src/bot/`](src/bot/) contains the Node.js Slack Socket Mode application.
+- [`src/shared/`](src/shared/) contains shared bot/Worker contracts, limits, and
+  validation helpers.
 - [`src/worker/`](src/worker/) contains the Cloudflare Worker,
   `SlackThreadAgent`, Wrangler configuration, and local Worker development
   variables.
@@ -159,6 +161,7 @@ message.` or malformed tool-call output.
 Useful commands:
 
 ```sh
+npm test
 npm run worker:types
 npm run worker:check
 npm run worker:dev
@@ -184,6 +187,12 @@ Check the Worker TypeScript:
 
 ```sh
 npm run worker:check
+```
+
+Run the unit test suite:
+
+```sh
+npm test
 ```
 
 ## Start

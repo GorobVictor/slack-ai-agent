@@ -23,6 +23,7 @@ npm run dev
 npm run build
 npm start
 npm run check
+npm test
 npm run worker:types
 npm run worker:check
 npm run worker:dev
@@ -37,7 +38,14 @@ npm run worker:dev
 - `src/bot/cloudflareAgentClient.ts` calls the Cloudflare Worker answer endpoint.
 - `src/bot/slackFileAttachments.ts` downloads and normalizes Slack file attachments before forwarding them to the Worker.
 - `src/shared/slackAttachments.ts` defines the shared bot/Worker attachment and generated-file contracts.
+- `src/shared/slackAnswer.ts` defines the shared bot/Worker answer request contract.
+- `src/shared/limits.ts` centralizes attachment, request, and generated-file limits.
+- `src/shared/jsonGuards.ts` provides shared JSON and primitive type guards.
 - `src/worker/server.ts` is the Cloudflare Worker entrypoint and `SlackThreadAgent` implementation.
+- `src/worker/artifactTool.ts` implements the AI artifact tool and generated-file normalization.
+- `src/worker/aiResponseParsing.ts` adapts Workers AI response shapes and tool calls.
+- `src/worker/threadState.ts` contains pure Slack thread state helpers.
+- `src/worker/aiTypes.ts` defines shared Worker AI message and tool-call types.
 - `src/worker/logger.ts` provides structured JSON logging for Worker requests, AI generation, MCP, and tool-call diagnostics.
 - `src/worker/mcp.ts` registers configured MCP servers and exposes their tools to the Worker AI loop.
 - `src/worker/mcp.config.ts` lists enabled remote MCP servers, starting with Context7.
