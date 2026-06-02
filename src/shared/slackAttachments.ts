@@ -1,3 +1,10 @@
+import {
+  isNonEmptyString,
+  isNonNegativeFiniteNumber,
+  isOptionalString,
+  isPlainObject,
+} from "./jsonGuards.js";
+
 export type SlackInputAttachment = {
   id: string;
   name: string;
@@ -23,11 +30,11 @@ export type SlackAnswerPayload = {
 };
 
 export function isSlackInputAttachment(value: unknown): value is SlackInputAttachment {
-  if (!value || typeof value !== "object") {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  const candidate = value as Record<string, unknown>;
+  const candidate = value;
 
   return (
     isNonEmptyString(candidate.id) &&
@@ -42,11 +49,11 @@ export function isSlackInputAttachment(value: unknown): value is SlackInputAttac
 }
 
 export function isSlackGeneratedFile(value: unknown): value is SlackGeneratedFile {
-  if (!value || typeof value !== "object") {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  const candidate = value as Record<string, unknown>;
+  const candidate = value;
 
   return (
     isNonEmptyString(candidate.filename) &&
@@ -58,29 +65,17 @@ export function isSlackGeneratedFile(value: unknown): value is SlackGeneratedFil
 }
 
 export function isSlackAnswerPayload(value: unknown): value is SlackAnswerPayload {
-  if (!value || typeof value !== "object") {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  const candidate = value as Record<string, unknown>;
+  const candidate = value;
 
   return (
     isNonEmptyString(candidate.answer) &&
     (candidate.files === undefined ||
       (Array.isArray(candidate.files) && candidate.files.every(isSlackGeneratedFile)))
   );
-}
-
-export function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
-}
-
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isAttachmentContentKind(

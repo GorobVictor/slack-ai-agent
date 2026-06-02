@@ -5,6 +5,12 @@ import { PDFParse } from "pdf-parse";
 import readXlsxFile from "read-excel-file/node";
 
 import type { SlackInputAttachment } from "../shared/slackAttachments.js";
+import {
+  maxAttachmentCount,
+  maxDownloadBytes,
+  maxExtractedTextChars,
+  maxImageBytes,
+} from "../shared/limits.js";
 
 export type SlackEventFile = {
   id?: string;
@@ -20,11 +26,6 @@ export type SlackEventFile = {
 type AttachmentLogger = {
   warn(message: string, metadata?: unknown): void;
 };
-
-const maxAttachmentCount = 5;
-const maxDownloadBytes = 5 * 1024 * 1024;
-const maxImageBytes = 512 * 1024;
-const maxExtractedTextChars = 20_000;
 
 export async function normalizeSlackFiles(
   files: SlackEventFile[] | undefined,
@@ -112,11 +113,41 @@ async function downloadSlackFile(url: string, slackBotToken: string): Promise<Bu
   }
 
   const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (contentLength > maxDownloadBytes) {
+  if (Number.isFinite(contentLength) && contentLength > maxDownloadBytes) {
     throw new Error(`Slack file download is larger than ${maxDownloadBytes} bytes.`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  return readResponseBodyWithLimit(response, maxDownloadBytes);
+}
+
+async function readResponseBodyWithLimit(
+  response: Response,
+  byteLimit: number,
+): Promise<Buffer> {
+  if (!response.body) {
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    totalBytes += value.byteLength;
+    if (totalBytes > byteLimit) {
+      await reader.cancel();
+      throw new Error(`Slack file download is larger than ${byteLimit} bytes.`);
+    }
+
+    chunks.push(Buffer.from(value));
+  }
+
+  return Buffer.concat(chunks, totalBytes);
 }
 
 async function parseAttachment(input: {

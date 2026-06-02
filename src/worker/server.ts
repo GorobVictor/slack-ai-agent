@@ -5,17 +5,39 @@ import type {
   SlackGeneratedFile,
   SlackInputAttachment,
 } from "../shared/slackAttachments";
+import type { SlackAnswerRequest } from "../shared/slackAnswer";
+import { isSlackAnswerRequest } from "../shared/slackAnswer";
 import {
-  isSlackGeneratedFile,
-  isSlackInputAttachment,
-} from "../shared/slackAttachments";
+  maxGeneratedFiles,
+  maxRequestBytes,
+} from "../shared/limits";
+import { isNonEmptyString } from "../shared/jsonGuards";
+import type { AiMessage } from "./aiTypes";
+import {
+  extractAiResponsePayload,
+  getFirstChatCompletionMessageContent,
+  getFirstChatCompletionMessageText,
+  getToolCalls,
+  summarizeAiResponse,
+} from "./aiResponseParsing";
+import {
+  artifactToolName,
+  createArtifactToolDefinition,
+  executeArtifactToolCall,
+  extractPlainTextArtifactToolCall,
+} from "./artifactTool";
+import {
+  buildAnsweredThreadState,
+  trimMessages,
+  type SlackThreadMessage,
+  type SlackThreadState,
+} from "./threadState";
 import {
   executeMcpToolCall,
   loadMcpToolDefinitions,
 } from "./mcp";
 import {
   createLogger,
-  logValueSnippet,
   type Logger,
 } from "./logger";
 
@@ -32,59 +54,7 @@ const defaultAiGatewaySkipCache = true;
 const defaultAiGatewayCollectLogs = true;
 const defaultMcpConnectionTimeoutMs = 5_000;
 const defaultAiLogResponseSnippetChars = 2_000;
-const maxRequestBytes = 1024 * 1024;
-const maxGeneratedFiles = 5;
-const maxGeneratedFileBytes = 1024 * 1024;
 const maxArtifactToolRounds = 50;
-const artifactToolName = "create_artifact";
-
-type SlackAnswerRequest = {
-  requestId?: string;
-  channel: string;
-  threadTs: string;
-  messageTs: string;
-  user: string;
-  text: string;
-  isMention: boolean;
-  attachments: SlackInputAttachment[];
-};
-
-type SlackThreadMessage = {
-  role: "user" | "assistant";
-  content: string;
-  createdAt: string;
-  slackMessageTs?: string;
-  slackUser?: string;
-};
-
-type SlackThreadState = {
-  messages: SlackThreadMessage[];
-  updatedAt: string | null;
-};
-
-type AiToolCall = {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-};
-
-type AiMessage = {
-  role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
-  tool_calls?: AiToolCall[];
-  tool_call_id?: string;
-};
-
-type ArtifactToolResult =
-  | { ok: true; filename: string }
-  | { ok: false; error: string };
-
-type PlainTextArtifactToolCallResult =
-  | { ok: true; toolCall: AiToolCall }
-  | { ok: false; error: string; snippet: string };
 
 type AiGatewayRequestKind = "answer" | "image_description";
 
@@ -131,28 +101,17 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       userMessage,
     ], maxThreadMessages);
 
-    this.setState({
-      messages: messagesWithQuestion,
-      updatedAt: now,
-    });
-
     const response = await this.generateAnswer(messagesWithQuestion, input, logger);
     const answeredAt = new Date().toISOString();
 
-    this.setState({
-      messages: trimMessages(
-        [
-          ...messagesWithQuestion,
-          {
-            role: "assistant",
-            content: formatAssistantMessage(response),
-            createdAt: answeredAt,
-          },
-        ],
+    this.setState(
+      buildAnsweredThreadState({
+        messagesWithQuestion,
+        assistantContent: formatAssistantMessage(response),
+        answeredAt,
         maxThreadMessages,
-      ),
-      updatedAt: answeredAt,
-    });
+      }),
+    );
 
     logger.info("slack_answer_completed", {
       generatedFileCount: response.files?.length ?? 0,
@@ -373,7 +332,11 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
         }
 
         return mergeAnswerWithGeneratedFiles(
-          extractAiResponsePayload(response, roundLogger),
+          extractAiResponsePayload(
+            response,
+            roundLogger,
+            defaultAiLogResponseSnippetChars,
+          ),
           files,
         );
       }
@@ -649,26 +612,6 @@ async function readAnswerRequest(
   };
 }
 
-function isSlackAnswerRequest(value: unknown): value is SlackAnswerRequest {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Record<string, unknown>;
-
-  return (
-    isNonEmptyString(candidate.channel) &&
-    isNonEmptyString(candidate.threadTs) &&
-    isNonEmptyString(candidate.messageTs) &&
-    isNonEmptyString(candidate.user) &&
-    typeof candidate.text === "string" &&
-    typeof candidate.isMention === "boolean" &&
-    Array.isArray(candidate.attachments) &&
-    candidate.attachments.every(isSlackInputAttachment) &&
-    (candidate.text.trim().length > 0 || candidate.attachments.length > 0)
-  );
-}
-
 function formatUserMessage(input: SlackAnswerRequest): string {
   const mentionPrefix = input.isMention ? "Mention" : "Thread reply";
   const text = input.text || "[No text]";
@@ -681,64 +624,12 @@ function cleanSlackText(text: string): string {
   return text.replace(/<@[A-Z0-9]+>/g, "").replace(/\s+/g, " ").trim();
 }
 
-function trimMessages(
-  messages: SlackThreadMessage[],
-  maxThreadMessages = defaultMaxThreadMessages,
-): SlackThreadMessage[] {
-  return messages.slice(-maxThreadMessages);
-}
-
 function buildSystemPrompt(basePrompt: string): string {
   return `${basePrompt}
 
 Use available MCP tools when they can provide fresher or more precise context than the Slack thread alone. Prefer Context7 MCP tools for software library and framework documentation lookups before answering documentation-sensitive implementation questions.
 
 When a downloadable artifact is useful, call the ${artifactToolName} tool instead of pasting large content into Slack. Use the actual function/tool calling interface only; never print literal tool-call markup such as <|tool_call>, call:${artifactToolName}, or JSON tool arguments in the Slack reply. Use the tool for complete artifacts such as code files, CSV data, JSON files, markdown documents, or spreadsheet-ready data. After the tool succeeds, reply with a short natural-language summary only. Do not print tool arguments, JSON payloads, or full file contents in the Slack reply.`;
-}
-
-function createArtifactToolDefinition(): Record<string, unknown> {
-  return {
-    type: "function",
-    function: {
-      name: artifactToolName,
-      description:
-        "Create a downloadable file attachment that the Slack bot will upload to the current thread.",
-      parameters: {
-        type: "object",
-        properties: {
-          filename: {
-            type: "string",
-            description:
-              "The file name including extension, for example HelloWorld.cs or results.csv.",
-          },
-          mimeType: {
-            type: "string",
-            description:
-              "The MIME type, for example text/plain, text/x-csharp, text/csv, application/json, or text/markdown.",
-          },
-          content: {
-            type: "string",
-            description:
-              "Plain text file contents. Use this for code, CSV, JSON, markdown, and other text artifacts.",
-          },
-          contentBase64: {
-            type: "string",
-            description:
-              "Base64-encoded binary file contents. Only use when content is not plain text.",
-          },
-          title: {
-            type: "string",
-            description: "Optional display title for Slack.",
-          },
-          initialComment: {
-            type: "string",
-            description: "Optional comment shown with the uploaded file.",
-          },
-        },
-        required: ["filename", "mimeType"],
-      },
-    },
-  };
 }
 
 function formatAttachments(attachments: SlackInputAttachment[]): string {
@@ -788,28 +679,6 @@ function extractImageDescription(response: Record<string, unknown>): string | nu
     : null;
 }
 
-function extractAiResponsePayload(
-  response: Record<string, unknown>,
-  logger: Logger,
-): SlackAnswerPayload {
-  const text =
-    response.response ??
-    getFirstChatCompletionMessageContent(response);
-
-  if (typeof text === "string" && text.trim()) {
-    return parseStructuredAiResponse(text.trim()) ?? { answer: text.trim() };
-  }
-
-  logger.warn("ai_response_payload_missing_text", {
-    fallbackReason: "missing_response_text",
-    hasChoices: Array.isArray(response.choices),
-    responseKeys: Object.keys(response),
-    responseShape: summarizeAiResponse(response, defaultAiLogResponseSnippetChars),
-  });
-
-  return { answer: "I could not generate an answer for that message." };
-}
-
 function mergeAnswerWithGeneratedFiles(
   response: SlackAnswerPayload,
   files: SlackGeneratedFile[],
@@ -819,584 +688,6 @@ function mergeAnswerWithGeneratedFiles(
   return mergedFiles.length > 0
     ? { answer: response.answer, files: mergedFiles }
     : { answer: response.answer };
-}
-
-function summarizeAiResponse(
-  response: Record<string, unknown>,
-  maxStringLength: number,
-): unknown {
-  const firstChoice = getFirstChatCompletionChoice(response);
-  const message = getFirstChatCompletionMessage(response);
-  const messageContent = message?.content;
-  const legacyResponse = response.response;
-
-  return logValueSnippet(
-    {
-      responseKeys: Object.keys(response),
-      responseText:
-        typeof legacyResponse === "string" ? legacyResponse : undefined,
-      choiceCount: Array.isArray(response.choices) ? response.choices.length : 0,
-      finishReason:
-        firstChoice && typeof firstChoice.finish_reason === "string"
-          ? firstChoice.finish_reason
-          : undefined,
-      messageKeys: message ? Object.keys(message) : [],
-      messageContent:
-        typeof messageContent === "string" ? messageContent : undefined,
-      messageToolCallCount: Array.isArray(message?.tool_calls)
-        ? message.tool_calls.length
-        : 0,
-      legacyToolCallCount: Array.isArray(response.tool_calls)
-        ? response.tool_calls.length
-        : 0,
-    },
-    maxStringLength,
-  );
-}
-
-function extractPlainTextArtifactToolCall(
-  text: string | null,
-): PlainTextArtifactToolCallResult | null {
-  if (!text || !hasPlainTextToolCallMarker(text)) {
-    return null;
-  }
-
-  const callIndex = text.indexOf(`call:${artifactToolName}`);
-  const toolNameIndex =
-    callIndex === -1 ? text.indexOf(artifactToolName) : callIndex;
-  if (toolNameIndex === -1) {
-    return {
-      ok: false,
-      error: "Plain-text tool call marker did not target create_artifact.",
-      snippet: text.slice(0, 500),
-    };
-  }
-
-  const braceStart = text.indexOf("{", toolNameIndex);
-
-  if (braceStart === -1) {
-    return {
-      ok: false,
-      error: "Plain-text artifact tool call did not include JSON arguments.",
-      snippet: text.slice(0, 500),
-    };
-  }
-
-  const argumentsJson = extractBalancedJsonObject(text, braceStart);
-  if (!argumentsJson) {
-    const lenientArguments = parseLenientArtifactToolArguments(text, braceStart);
-    if (lenientArguments) {
-      return createPlainTextArtifactToolCall(lenientArguments);
-    }
-
-    return {
-      ok: false,
-      error: "Plain-text artifact tool call arguments were not balanced JSON.",
-      snippet: text.slice(0, 500),
-    };
-  }
-
-  const parsedJsonArguments = parseJsonObject(argumentsJson);
-  const parsedArguments =
-    (isPlainObject(parsedJsonArguments)
-      ? parsedJsonArguments
-      : null) ??
-    parseLenientArtifactToolArguments(text, braceStart);
-  if (!parsedArguments) {
-    return {
-      ok: false,
-      error: "Plain-text artifact tool call arguments were not valid JSON.",
-      snippet: argumentsJson.slice(0, 500),
-    };
-  }
-
-  return createPlainTextArtifactToolCall(parsedArguments);
-}
-
-function createPlainTextArtifactToolCall(
-  parsedArguments: Record<string, unknown>,
-): PlainTextArtifactToolCallResult {
-  return {
-    ok: true,
-    toolCall: {
-      id: `plain_text_${artifactToolName}`,
-      type: "function",
-      function: {
-        name: artifactToolName,
-        arguments: JSON.stringify(parsedArguments),
-      },
-    },
-  };
-}
-
-function parseLenientArtifactToolArguments(
-  text: string,
-  braceStart: number,
-): Record<string, unknown> | null {
-  const body = text.slice(braceStart + 1);
-  if (!hasLenientArtifactTerminator(body)) {
-    return null;
-  }
-
-  const fields = extractDelimitedArtifactFields(body);
-  const content = normalizeOptionalString(fields.content);
-  const contentBase64 = normalizeOptionalString(fields.contentBase64);
-
-  if (!content && !contentBase64) {
-    return null;
-  }
-
-  const filename =
-    normalizeOptionalString(fields.filename) ??
-    normalizeOptionalString(fields.fileName) ??
-    inferArtifactFilename(content ?? "");
-  const mimeType =
-    normalizeOptionalString(fields.mimeType) ??
-    normalizeOptionalString(fields.mime_type) ??
-    inferArtifactMimeType(filename, content ?? "");
-  const args: Record<string, unknown> = {
-    filename,
-    mimeType,
-  };
-
-  if (content) {
-    args.content = content;
-  }
-
-  if (contentBase64) {
-    args.contentBase64 = contentBase64;
-  }
-
-  const title = normalizeOptionalString(fields.title);
-  if (title) {
-    args.title = title;
-  }
-
-  const initialComment = normalizeOptionalString(fields.initialComment);
-  if (initialComment) {
-    args.initialComment = initialComment;
-  }
-
-  return args;
-}
-
-function hasLenientArtifactTerminator(body: string): boolean {
-  return (
-    body.includes("<|tool_end|>") ||
-    body.includes("<|/tool_call|>") ||
-    body.includes("</tool_call>") ||
-    body.includes("<|end|>") ||
-    /}\s*(?:$|\n)/.test(body)
-  );
-}
-
-function extractDelimitedArtifactFields(body: string): Record<string, string> {
-  const fieldPattern = /(?:^|[,{]\s*)([A-Za-z][A-Za-z0-9_]*)\s*:\s*<\|"\|>/g;
-  const matches = [...body.matchAll(fieldPattern)];
-  const fields: Record<string, string> = {};
-
-  for (let index = 0; index < matches.length; index += 1) {
-    const match = matches[index];
-    const fieldName = match[1];
-    if (!fieldName || match.index === undefined) {
-      continue;
-    }
-
-    const valueStart = match.index + match[0].length;
-    const nextMatch = matches[index + 1];
-    const valueEnd = nextMatch?.index ?? body.length;
-    fields[fieldName] = cleanDelimitedArtifactValue(
-      body.slice(valueStart, valueEnd),
-    );
-  }
-
-  return fields;
-}
-
-function cleanDelimitedArtifactValue(value: string): string {
-  const endMarkers = [
-    "<|tool_end|>",
-    "<|/tool_call|>",
-    "</tool_call>",
-    "<|end|>",
-  ];
-  let cleaned = value;
-
-  for (const marker of endMarkers) {
-    const markerIndex = cleaned.indexOf(marker);
-    if (markerIndex !== -1) {
-      cleaned = cleaned.slice(0, markerIndex);
-    }
-  }
-
-  return cleaned
-    .replace(/<\|"\|>\s*[,}]?\s*$/g, "")
-    .replace(/}\s*$/g, "")
-    .trim();
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function inferArtifactFilename(content: string): string {
-  if (/\busing\s+Telegram\.Bot\b|\bnamespace\b|\bclass\s+\w+/.test(content)) {
-    return "TelegramBot.cs";
-  }
-
-  return "artifact.txt";
-}
-
-function inferArtifactMimeType(filename: string, content: string): string {
-  if (filename.endsWith(".cs") || /\busing\s+System\b/.test(content)) {
-    return "text/x-csharp";
-  }
-
-  if (filename.endsWith(".md")) {
-    return "text/markdown";
-  }
-
-  if (filename.endsWith(".json")) {
-    return "application/json";
-  }
-
-  return "text/plain";
-}
-
-function hasPlainTextToolCallMarker(text: string): boolean {
-  return (
-    text.includes("<|tool_call>") ||
-    text.includes(`call:${artifactToolName}`) ||
-    text.includes(`<tool_call>${artifactToolName}`)
-  );
-}
-
-function extractBalancedJsonObject(text: string, startIndex: number): string | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = startIndex; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-
-      if (depth === 0) {
-        return text.slice(startIndex, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
-function getToolCalls(response: Record<string, unknown>): AiToolCall[] {
-  const chatCompletionToolCalls = getFirstChatCompletionMessageToolCalls(response);
-  if (chatCompletionToolCalls.length > 0) {
-    return chatCompletionToolCalls;
-  }
-
-  const legacyToolCalls = response.tool_calls;
-  if (!Array.isArray(legacyToolCalls)) {
-    return [];
-  }
-
-  return legacyToolCalls
-    .map((toolCall, index) => normalizeToolCall(toolCall, `legacy_tool_${index}`))
-    .filter((toolCall): toolCall is AiToolCall => Boolean(toolCall));
-}
-
-function getFirstChatCompletionMessageToolCalls(
-  response: Record<string, unknown>,
-): AiToolCall[] {
-  const message = getFirstChatCompletionMessage(response);
-  if (!message) {
-    return [];
-  }
-
-  const toolCalls = message.tool_calls;
-  if (!Array.isArray(toolCalls)) {
-    return [];
-  }
-
-  return toolCalls
-    .map((toolCall, index) => normalizeToolCall(toolCall, `tool_${index}`))
-    .filter((toolCall): toolCall is AiToolCall => Boolean(toolCall));
-}
-
-function normalizeToolCall(value: unknown, fallbackId: string): AiToolCall | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const fn = candidate.function;
-  if (!fn || typeof fn !== "object") {
-    return null;
-  }
-
-  const functionCandidate = fn as Record<string, unknown>;
-  if (!isNonEmptyString(functionCandidate.name)) {
-    return null;
-  }
-
-  const toolArguments = stringifyToolArguments(functionCandidate.arguments);
-  if (!toolArguments) {
-    return null;
-  }
-
-  return {
-    id: isNonEmptyString(candidate.id) ? candidate.id : fallbackId,
-    type: "function",
-    function: {
-      name: functionCandidate.name,
-      arguments: toolArguments,
-    },
-  };
-}
-
-function stringifyToolArguments(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (value && typeof value === "object") {
-    return JSON.stringify(value);
-  }
-
-  return null;
-}
-
-function executeArtifactToolCall(
-  toolCall: AiToolCall,
-  files: SlackGeneratedFile[],
-): ArtifactToolResult {
-  if (toolCall.function.name !== artifactToolName) {
-    return { ok: false, error: `Unknown tool: ${toolCall.function.name}` };
-  }
-
-  if (files.length >= maxGeneratedFiles) {
-    return {
-      ok: false,
-      error: `Cannot create more than ${maxGeneratedFiles} files in one response.`,
-    };
-  }
-
-  const args = parseJsonObject(toolCall.function.arguments);
-  const file = normalizeGeneratedFile(args);
-
-  if (!file) {
-    return {
-      ok: false,
-      error:
-        "Invalid artifact arguments. Provide filename, mimeType, and either content or contentBase64 within size limits.",
-    };
-  }
-
-  files.push(file);
-
-  return { ok: true, filename: file.filename };
-}
-
-function parseStructuredAiResponse(text: string): SlackAnswerPayload | null {
-  const parsed = getJsonCandidates(text)
-    .map(parseJsonObject)
-    .find((candidate) => candidate !== null);
-
-  if (!parsed) {
-    return null;
-  }
-
-  const candidate = parsed as Record<string, unknown>;
-  if (!isNonEmptyString(candidate.answer)) {
-    return null;
-  }
-
-  const files = normalizeGeneratedFiles(candidate.files);
-
-  return files.length > 0
-    ? { answer: candidate.answer.trim(), files }
-    : { answer: candidate.answer.trim() };
-}
-
-function normalizeGeneratedFiles(value: unknown): SlackGeneratedFile[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .slice(0, maxGeneratedFiles)
-    .map(normalizeGeneratedFile)
-    .filter((file): file is SlackGeneratedFile => Boolean(file));
-}
-
-function normalizeGeneratedFile(value: unknown): SlackGeneratedFile | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const contentBase64 = isNonEmptyString(candidate.contentBase64)
-    ? candidate.contentBase64
-    : isNonEmptyString(candidate.content)
-      ? stringToBase64(candidate.content)
-      : undefined;
-
-  const normalized = {
-    filename: candidate.filename,
-    mimeType: candidate.mimeType,
-    contentBase64,
-    title: candidate.title,
-    initialComment: candidate.initialComment,
-  };
-
-  if (!isSlackGeneratedFile(normalized)) {
-    return null;
-  }
-
-  if (base64DecodedByteLength(normalized.contentBase64) > maxGeneratedFileBytes) {
-    return null;
-  }
-
-  return normalized;
-}
-
-function parseJsonObject(text: string): unknown | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getJsonCandidates(text: string): string[] {
-  const candidates = [text.trim()];
-  const fencedJson = extractFencedJson(text);
-  const embeddedJson = extractEmbeddedJsonObject(text);
-
-  if (fencedJson) {
-    candidates.push(fencedJson);
-  }
-
-  if (embeddedJson) {
-    candidates.push(embeddedJson);
-  }
-
-  return [...new Set(candidates.filter(Boolean))];
-}
-
-function extractFencedJson(text: string): string | null {
-  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(text);
-
-  return fenceMatch?.[1]?.trim() || null;
-}
-
-function extractEmbeddedJsonObject(text: string): string | null {
-  const startIndex = text.indexOf("{");
-  const endIndex = text.lastIndexOf("}");
-
-  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
-    return null;
-  }
-
-  return text.slice(startIndex, endIndex + 1).trim();
-}
-
-function stringToBase64(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return btoa(binary);
-}
-
-function base64DecodedByteLength(value: string): number {
-  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-
-  return Math.floor((value.length * 3) / 4) - padding;
-}
-
-function getFirstChatCompletionMessageContent(
-  response: Record<string, unknown>,
-): unknown {
-  const message = getFirstChatCompletionMessage(response);
-
-  return message?.content;
-}
-
-function getFirstChatCompletionMessageText(
-  response: Record<string, unknown>,
-): string | null {
-  const content = getFirstChatCompletionMessageContent(response);
-
-  return typeof content === "string" ? content : null;
-}
-
-function getFirstChatCompletionMessage(
-  response: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const firstChoice = getFirstChatCompletionChoice(response);
-  if (!firstChoice) {
-    return null;
-  }
-
-  const message = firstChoice.message;
-
-  if (!message || typeof message !== "object") {
-    return null;
-  }
-
-  return message as Record<string, unknown>;
-}
-
-function getFirstChatCompletionChoice(
-  response: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const choices = response.choices;
-
-  if (!Array.isArray(choices) || choices.length === 0) {
-    return null;
-  }
-
-  const [firstChoice] = choices;
-
-  if (!firstChoice || typeof firstChoice !== "object") {
-    return null;
-  }
-
-  return firstChoice as Record<string, unknown>;
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function readNonEmptyString(value: unknown, defaultValue: string): string {

@@ -1,5 +1,6 @@
 import { mcpServers, type McpServerConfig } from "./mcp.config";
 import type { Logger } from "./logger";
+import { isPlainObject, parseJsonObject } from "../shared/jsonGuards";
 
 const defaultMcpConnectionTimeoutMs = 5_000;
 const maxMcpToolResultCharacters = 12_000;
@@ -44,10 +45,38 @@ export type McpToolResult =
   | { ok: true; result: unknown }
   | { ok: false; error: string };
 
+const toolDefinitionsCache = new WeakMap<
+  McpAgentClient,
+  Promise<McpToolDefinition[]>
+>();
+
 export async function loadMcpToolDefinitions(
   agent: McpAgentClient,
   env: unknown,
   options: { connectionTimeoutMs?: number } = {},
+  logger?: Logger,
+): Promise<McpToolDefinition[]> {
+  const cachedTools = toolDefinitionsCache.get(agent);
+  if (cachedTools) {
+    logger?.debug("mcp_tools_cache_hit");
+    return cachedTools;
+  }
+
+  const toolsPromise = discoverMcpToolDefinitions(agent, env, options, logger);
+  toolDefinitionsCache.set(agent, toolsPromise);
+
+  try {
+    return await toolsPromise;
+  } catch (error) {
+    toolDefinitionsCache.delete(agent);
+    throw error;
+  }
+}
+
+async function discoverMcpToolDefinitions(
+  agent: McpAgentClient,
+  env: unknown,
+  options: { connectionTimeoutMs?: number },
   logger?: Logger,
 ): Promise<McpToolDefinition[]> {
   await registerConfiguredMcpServers(agent, env, logger);
@@ -254,8 +283,8 @@ function toMcpListedTool(value: unknown): McpListedTool | null {
 }
 
 function normalizeMcpInputSchema(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
+  if (isPlainObject(value)) {
+    return value;
   }
 
   return {
@@ -287,18 +316,6 @@ function sanitizeToolName(value: string): string {
   const sanitized = value.replace(/[^A-Za-z0-9_-]/g, "_");
 
   return sanitized.replace(/^[-_]+/, "") || "tool";
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function compactMcpToolResult(value: unknown): unknown {
@@ -388,7 +405,7 @@ function normalizeMcpContent(value: unknown): unknown {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return isPlainObject(value);
 }
 
 function getErrorMessage(error: unknown): string {
