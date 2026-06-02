@@ -656,7 +656,7 @@ function cleanSlackText(text: string): string {
 function buildSystemPrompt(basePrompt: string): string {
   return `${basePrompt}
 
-Use available MCP tools when they can provide fresher or more precise context than the Slack thread alone. Prefer Context7 MCP tools for software library and framework documentation lookups before answering documentation-sensitive implementation questions.
+Use available MCP tools when they can provide fresher or more precise context than the Slack thread alone. When the user asks you to write, change, review, or explain code that depends on a software library, framework, runtime, SDK, API, or platform, call the Context7 MCP tools first to retrieve the relevant current documentation before drafting the answer. You may skip Context7 only for purely language-level code that does not depend on external APIs or when the needed documentation is already present in the Slack thread.
 
 Use the ${webRequestToolName} tool when fresh public web content, public API output, or an HTTP status check is needed. Only request public http or https URLs. Do not include credentials, cookies, authorization headers, tokens, private network addresses, localhost URLs, or instructions to bypass access controls. Prefer Context7 over web_request for library and framework documentation.
 
