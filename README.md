@@ -102,6 +102,15 @@ Slack's file upload API. This is useful for code snippets, CSV or
 spreadsheet-ready data, and other artifacts that should not be pasted directly
 into a Slack message.
 
+When the assistant needs fresh public web context, the Worker exposes a
+controlled `web_request` AI tool. The tool supports read-only `GET` and `HEAD`
+requests to public `http` and `https` URLs, sends browser-compatible default
+headers, blocks credentials and private/local hosts, follows only a bounded
+number of safe redirects, and truncates response bodies before returning them to
+the AI loop. It is intended for public pages, public API responses, and status
+checks; Context7 MCP remains the preferred tool for library and framework
+documentation.
+
 Active Slack threads are stored in SQLite so the bot can continue conversations
 after a process restart. The Cloudflare agent stores compact AI conversation
 context for each Slack thread.

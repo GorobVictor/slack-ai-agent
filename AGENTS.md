@@ -43,6 +43,7 @@ npm run worker:dev
 - `src/shared/jsonGuards.ts` provides shared JSON and primitive type guards.
 - `src/worker/server.ts` is the Cloudflare Worker entrypoint and `SlackThreadAgent` implementation.
 - `src/worker/artifactTool.ts` implements the AI artifact tool and generated-file normalization.
+- `src/worker/webRequestTool.ts` implements the controlled read-only public web request AI tool.
 - `src/worker/aiResponseParsing.ts` adapts Workers AI response shapes and tool calls.
 - `src/worker/threadState.ts` contains pure Slack thread state helpers.
 - `src/worker/aiTypes.ts` defines shared Worker AI message and tool-call types.
