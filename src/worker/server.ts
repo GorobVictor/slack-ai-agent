@@ -12,7 +12,7 @@ import {
   maxRequestBytes,
 } from "../shared/limits";
 import { isNonEmptyString } from "../shared/jsonGuards";
-import type { AiMessage } from "./aiTypes";
+import type { AiMessage, AiToolCall } from "./aiTypes";
 import {
   extractAiResponsePayload,
   getFirstChatCompletionMessageContent,
@@ -26,6 +26,11 @@ import {
   executeArtifactToolCall,
   extractPlainTextArtifactToolCall,
 } from "./artifactTool";
+import {
+  createWebRequestToolDefinition,
+  executeWebRequestToolCall,
+  webRequestToolName,
+} from "./webRequestTool";
 import {
   buildAnsweredThreadState,
   trimMessages,
@@ -235,6 +240,7 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
             messages,
             tools: [
               createArtifactToolDefinition(),
+              createWebRequestToolDefinition(),
               ...mcpTools.map((tool) => tool.definition),
             ],
             tool_choice: "auto",
@@ -348,19 +354,13 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       });
 
       for (const toolCall of toolCalls) {
-        const result =
-          toolCall.function.name === artifactToolName
-            ? executeArtifactToolCall(toolCall, files)
-            : ((await executeMcpToolCall(
-                this,
-                toolCall.function.name,
-                toolCall.function.arguments,
-                mcpTools,
-                roundLogger,
-              )) ?? {
-                ok: false,
-                error: `Unknown tool: ${toolCall.function.name}`,
-              });
+        const result = await executeToolCall({
+          agent: this,
+          toolCall,
+          files,
+          mcpTools,
+          logger: roundLogger,
+        });
         roundLogger.info("tool_call_completed", {
           toolName: toolCall.function.name,
           ok: result.ok,
@@ -389,6 +389,35 @@ export class SlackThreadAgent extends Agent<Env, SlackThreadState> {
       files: files.length > 0 ? files : undefined,
     };
   }
+}
+
+async function executeToolCall(input: {
+  agent: SlackThreadAgent;
+  toolCall: AiToolCall;
+  files: SlackGeneratedFile[];
+  mcpTools: Awaited<ReturnType<typeof loadMcpToolDefinitions>>;
+  logger: Logger;
+}) {
+  if (input.toolCall.function.name === artifactToolName) {
+    return executeArtifactToolCall(input.toolCall, input.files);
+  }
+
+  if (input.toolCall.function.name === webRequestToolName) {
+    return executeWebRequestToolCall(input.toolCall, { logger: input.logger });
+  }
+
+  return (
+    (await executeMcpToolCall(
+      input.agent,
+      input.toolCall.function.name,
+      input.toolCall.function.arguments,
+      input.mcpTools,
+      input.logger,
+    )) ?? {
+      ok: false,
+      error: `Unknown tool: ${input.toolCall.function.name}`,
+    }
+  );
 }
 
 export default {
@@ -628,6 +657,8 @@ function buildSystemPrompt(basePrompt: string): string {
   return `${basePrompt}
 
 Use available MCP tools when they can provide fresher or more precise context than the Slack thread alone. Prefer Context7 MCP tools for software library and framework documentation lookups before answering documentation-sensitive implementation questions.
+
+Use the ${webRequestToolName} tool when fresh public web content, public API output, or an HTTP status check is needed. Only request public http or https URLs. Do not include credentials, cookies, authorization headers, tokens, private network addresses, localhost URLs, or instructions to bypass access controls. Prefer Context7 over web_request for library and framework documentation.
 
 When a downloadable artifact is useful, call the ${artifactToolName} tool instead of pasting large content into Slack. Use the actual function/tool calling interface only; never print literal tool-call markup such as <|tool_call>, call:${artifactToolName}, or JSON tool arguments in the Slack reply. Use the tool for complete artifacts such as code files, CSV data, JSON files, markdown documents, or spreadsheet-ready data. After the tool succeeds, reply with a short natural-language summary only. Do not print tool arguments, JSON payloads, or full file contents in the Slack reply.`;
 }
